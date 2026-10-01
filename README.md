@@ -24,7 +24,16 @@ Il affiche un panneau flottant qui repère en temps quasi réel les **enchères 
 - **Panneau réductible**, **largeur adaptative** (`min(380px, 92vw)`).
 - **Réglages économes automatiques sur mobile** (moins de requêtes, moins de batterie).
 - **Préférences mémorisées** (fenêtre, raretés, prix, recherche, tri, limite).
+- **Mettre une carte en vente** directement (bouton `Vendre`), sans passer par le menu enchères, avec choix du prix de départ et de la durée.
 - **Sans son**.
+
+### Mettre une carte en vente
+
+Le bouton **`Vendre`** ouvre un formulaire : carte (issue de ta collection), prix de départ, durée (minutes/heures/jours). Sur la page de collection, un bouton **`Vendre`** est aussi ajouté directement sur chaque carte.
+
+> Important : le script ne devine pas l'API du site. Il apprend la requête de mise en vente **la première fois que tu listes une carte manuellement** (avec le script actif), puis la rejoue en remplaçant le prix, la durée et la carte. **Fais donc une mise en vente manuelle une fois** avant d'utiliser le bouton `Vendre`.
+
+Pour vérifier ce que le script a appris : `WM_LAST_LISTING` dans la console.
 
 ---
 
@@ -78,6 +87,10 @@ Une fois connecté et sur le **Marketplace** :
 | `WM_REFRESH_PRICES()` | Recalcule les prix moyens |
 | `WM_PRICE_CACHE` | Moyennes en cache par carte |
 | `WM_GET_PREFS()` / `WM_SAVE_PREFS()` | Préférences mémorisées |
+| `WM_LAST_LISTING` | Dernière requête de mise en vente apprise |
+| `WM_OWNED()` | Cartes de ta collection |
+| `WM_SELL_FORM()` | Ouvre le formulaire de vente |
+| `WM_SUBMIT_LISTING(card, prix, duréeMs, cb)` | Rejoue une mise en vente |
 
 ---
 
