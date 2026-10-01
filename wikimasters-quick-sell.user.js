@@ -84,12 +84,17 @@
 
   function looksLikeWrite(url, method) {
     if (!method || String(method).toUpperCase() === 'GET') return false;
-    return /rest\/v1|auction|marketplace|listing|sell|encher|\/api\/|rpc\//i.test(url || '');
+    if (/rest\/v1|auction|marketplace|listing|sell|encher|\/api\/|rpc\//i.test(url || '')) return true;
+    try {
+      const u = new URL(url, location.href);
+      if (u.origin === location.origin) return true;
+    } catch (e) {}
+    return false;
   }
 
   function isListingTemplate(t) {
     const s = (t.url || '') + ' ' + (t.body || '');
-    return /auction|current_bid|end_at|listing|encher/i.test(s);
+    return /auction|current_bid|end_at|listing|encher|card_?id|duration|duree|price|bid/i.test(s);
   }
 
   function recordListing(url, method, headers, body) {
