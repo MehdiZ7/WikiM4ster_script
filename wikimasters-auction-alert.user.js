@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WikiMasters - Encheres qui expirent bientot
 // @namespace    https://wiki-masters.com/
-// @version      1.14.0
-// @description  Encheres se terminant bientot (fenetres, raretes, prix, recherche), prix moyen, mises en vente directes (bouton Vendre sur les cartes de collection + formulaire prix/duree), preferences memorisees, largeur adaptative et reglages economes sur mobile. Sans son.
+// @version      1.14.1
+// @description  Encheres se terminant bientot (fenetres, raretes, prix, recherche), prix moyen, preferences memorisees, largeur adaptative et reglages economes sur mobile. Sans son. (La vente rapide est dans un script separe.)
 // @author       you
 // @match        https://www.wiki-masters.com/*
 // @match        https://wiki-masters.com/*
@@ -48,9 +48,6 @@
   let capturedAuth = null;
   let capturedApiKey = null;
   let lastAuctionsUrl = null;
-  let listingTemplates = [];
-  let ownedCards = null;
-  let ownedPending = null;
   const debug = { requests: 0, jsonOk: 0, jsonFail: 0, lastStatus: '-', lastError: '-', lastRows: '-', lastUpdate: 0, loading: false };
 
   function log() {
@@ -365,176 +362,6 @@
     } catch (e) {}
   }
 
-  function looksLikeWrite(url, method) {
-    if (!method || String(method).toUpperCase() === 'GET') return false;
-    return /auction|marketplace|listing|sell|encher|\/api\//i.test(url || '');
-  }
-
-  function recordListing(url, method, headers, body) {
-    try {
-      listingTemplates.unshift({
-        url: url,
-        method: String(method || 'POST').toUpperCase(),
-        headers: headers || {},
-        body: body == null ? null : (typeof body === 'string' ? body : JSON.stringify(body)),
-        ts: Date.now()
-      });
-      listingTemplates = listingTemplates.slice(0, 10);
-      window.WM_LAST_LISTING = listingTemplates[0];
-      log('captured listing request', url);
-    } catch (e) {}
-  }
-
-  function fetchOwnedCards() {
-    if (ownedCards) return Promise.resolve(ownedCards);
-    if (ownedPending) return ownedPending;
-    const headers = authHeaders();
-    if (!headers) return Promise.reject(new Error('pas de jeton'));
-    ownedPending = window.fetch(SUPABASE_URL + '/rest/v1/user_cards?select=*&limit=1000', { headers: headers })
-      .then(function (r) { return r.text(); })
-      .then(function (t) {
-        let rows = [];
-        try { rows = JSON.parse(t); } catch (e) {}
-        if (!Array.isArray(rows)) rows = [];
-        const cardIds = [];
-        for (const r of rows) if (r.card_id && cardIds.indexOf(String(r.card_id)) === -1) cardIds.push(String(r.card_id));
-        const map = {};
-        const chunks = [];
-        for (let i = 0; i < cardIds.length; i += 50) chunks.push(cardIds.slice(i, i + 50));
-        let chain = Promise.resolve();
-        chunks.forEach(function (ch) {
-          chain = chain.then(function () {
-            return window.fetch(SUPABASE_URL + '/rest/v1/cards?select=id,wikipedia_title,image_url,rarity&id=in.(' + ch.join(',') + ')', { headers: headers })
-              .then(function (r) { return r.text(); })
-              .then(function (tt) { try { JSON.parse(tt).forEach(function (c) { map[c.id] = c; }); } catch (e) {} });
-          });
-        });
-        return chain.then(function () {
-          ownedCards = rows.map(function (r) {
-            const c = map[r.card_id] || {};
-            return {
-              userCardId: String(r.id),
-              cardId: r.card_id ? String(r.card_id) : null,
-              title: c.wikipedia_title || 'Carte inconnue',
-              image: c.image_url || null,
-              rarity: c.rarity || null
-            };
-          }).sort(function (a, b) { return String(a.title).localeCompare(String(b.title)); });
-          ownedPending = null;
-          return ownedCards;
-        });
-      })
-      .catch(function (e) { ownedPending = null; throw e; });
-    return ownedPending;
-  }
-
-  function deepSubstitute(node, ctx) {
-    if (!node || typeof node !== 'object') return;
-    for (const k of Object.keys(node)) {
-      const v = node[k];
-      if (v && typeof v === 'object') { deepSubstitute(v, ctx); continue; }
-      const key = String(k).toLowerCase();
-      if (ctx.userCardId && /user_?card/.test(key)) node[k] = ctx.userCardId;
-      else if (ctx.cardId && /(^|_)card(_?id)?$/.test(key) && !/user/.test(key)) node[k] = ctx.cardId;
-      else if (/(price|bid|amount|montant|prix)/.test(key) && typeof v === 'number') node[k] = ctx.price;
-      else if (/(end_?at|ends_?at|endat|expire|deadline|end_date)/.test(key)) node[k] = ctx.endISO;
-      else if (/(duration|duree|length)/.test(key) && typeof v === 'number') node[k] = ctx.durationHours;
-    }
-  }
-
-  function submitListing(card, price, durationMs, onStatus) {
-    const tpl = listingTemplates[0];
-    if (!tpl) {
-      onStatus('Aucune requ\u00eate apprise. Fais UNE mise en vente manuelle (avec le script actif), puis r\u00e9essaie.', true);
-      return;
-    }
-    const ctx = {
-      price: Number(price),
-      cardId: card.cardId,
-      userCardId: card.userCardId,
-      endISO: new Date(Date.now() + durationMs).toISOString(),
-      durationHours: Math.round(durationMs / 3600000 * 100) / 100
-    };
-    let body = tpl.body;
-    if (body) {
-      try {
-        const obj = JSON.parse(body);
-        deepSubstitute(obj, ctx);
-        body = JSON.stringify(obj);
-      } catch (e) {
-        body = body.replace(/((?:price|bid|current_bid|amount)=)[^&]*/gi, '$1' + ctx.price)
-          .replace(/((?:end_at|ends_at|end|expire|deadline)=)[^&]*/gi, '$1' + encodeURIComponent(ctx.endISO));
-      }
-    }
-    const headers = Object.assign({}, tpl.headers);
-    onStatus('Envoi...', false);
-    window.fetch(tpl.url, { method: tpl.method, headers: headers, body: body, credentials: 'include' })
-      .then(function (r) { return r.text().then(function (t) { return { status: r.status, text: t }; }); })
-      .then(function (res) {
-        if (res.status >= 400) onStatus('Erreur ' + res.status + ' : ' + res.text.slice(0, 200), true);
-        else { onStatus('Ench\u00e8re lanc\u00e9e !', false); setTimeout(function () { directQuery(true); }, 800); }
-      })
-      .catch(function (e) { onStatus('Erreur r\u00e9seau : ' + (e && e.message), true); });
-  }
-
-  function injectCollectionButtons() {
-    try {
-      if (!/collection|album|inventaire|inventory|cartes/i.test(location.pathname)) return;
-      const imgs = document.querySelectorAll('img');
-      for (const img of imgs) {
-        const src = img.currentSrc || img.src || '';
-        if (!/cards(%2F|\/)/i.test(src)) continue;
-        const holder = img.parentElement;
-        if (!holder || holder.querySelector('.wm-sell-btn')) continue;
-        if (getComputedStyle(holder).position === 'static') holder.style.position = 'relative';
-        const btn = document.createElement('button');
-        btn.className = 'wm-sell-btn';
-        btn.textContent = 'Vendre';
-        btn.style.cssText = 'position:absolute;top:6px;right:6px;z-index:10;padding:3px 8px;border-radius:6px;' +
-          'border:1px solid #3a5a3a;background:#1f3a1f;color:#9fe29f;font-size:11px;font-weight:700;' +
-          'cursor:pointer;font-family:system-ui,sans-serif;';
-        btn.addEventListener('click', function (ev) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          openSellForm(src);
-        });
-        holder.appendChild(btn);
-      }
-    } catch (e) {}
-  }
-
-  function openSellForm(imageSrc) {
-    if (!ui) return;
-    const modal = ui.root.getElementById('modal');
-    if (!modal) return;
-    modal.style.display = 'flex';
-    const sel = ui.root.getElementById('sellCard');
-    const status = ui.root.getElementById('sellStatus');
-    status.textContent = '';
-    status.style.color = '#9aa09a';
-    sel.innerHTML = '<option>Chargement...</option>';
-    fetchOwnedCards().then(function (cards) {
-      sel.innerHTML = '';
-      if (!cards.length) { sel.innerHTML = '<option value="">Aucune carte trouv\u00e9e</option>'; return; }
-      for (const c of cards) {
-        const opt = document.createElement('option');
-        opt.value = c.userCardId;
-        opt.textContent = c.title + (c.rarity ? ' [' + c.rarity + ']' : '');
-        sel.appendChild(opt);
-      }
-      if (imageSrc) {
-        const m = imageSrc.match(/cards(?:%2F|\/)([^.?&]+)/i);
-        const slug = m && m[1];
-        if (slug) {
-          const found = cards.find(function (c) { return c.image && c.image.toLowerCase().indexOf(slug.toLowerCase()) !== -1; });
-          if (found) sel.value = found.userCardId;
-        }
-      }
-    }).catch(function () {
-      sel.innerHTML = '<option value="">Connecte-toi puis r\u00e9essaie</option>';
-    });
-  }
-
   function hookFetch() {
     const original = window.fetch;
     if (!original) return;
@@ -548,12 +375,6 @@
       if (initHeaders) captureHeaders(initHeaders);
       else if (first && first.headers && first.headers.forEach) captureHeaders(first.headers);
       if (/\/rest\/v1\/auctions/.test(requestUrl)) lastAuctionsUrl = requestUrl;
-      const init = args[1] || {};
-      const method = init.method || (first && first.method) || 'GET';
-      if (looksLikeWrite(requestUrl, method)) {
-        const hdrs = headersToMap(initHeaders || (first && first.headers));
-        recordListing(requestUrl, method, hdrs, init.body != null ? init.body : null);
-      }
       const promise = original.apply(this, args);
       promise.then(function (res) {
         try {
@@ -584,19 +405,13 @@
     };
     proto.open = function (method, url) {
       this.__wmUrl = url;
-      this.__wmMethod = method;
       try {
         if (/\/rest\/v1\/auctions/.test(String(url))) lastAuctionsUrl = String(url);
       } catch (e) {}
       return origOpen.apply(this, arguments);
     };
-    proto.send = function (body) {
+    proto.send = function () {
       const xhr = this;
-      try {
-        if (looksLikeWrite(xhr.__wmUrl, xhr.__wmMethod)) {
-          recordListing(xhr.__wmUrl, xhr.__wmMethod, {}, body != null ? body : null);
-        }
-      } catch (e) {}
       xhr.addEventListener('load', function () {
         try {
           if (xhr.responseType === '' || xhr.responseType === 'text') {
@@ -781,16 +596,6 @@
       '.foot button{flex:1;font-size:11.5px;padding:7px 8px;border-radius:8px;border:1px solid #2a2d2a;background:#161916;color:#cfd3cf;cursor:pointer}' +
       '.foot button:hover{background:#1d201d}' +
       '.foot button.active{background:#3a2a12;border-color:#7a5a1a;color:#ffd166}' +
-      '.modal{display:none;position:absolute;inset:0;background:rgba(0,0,0,.65);z-index:5;align-items:center;justify-content:center;padding:12px}' +
-      '.dialog{background:#141614;border:1px solid #2a2d2a;border-radius:12px;padding:14px;width:100%;display:flex;flex-direction:column;gap:7px;box-sizing:border-box}' +
-      '.dtitle{font-size:13px;font-weight:700;margin-bottom:2px}' +
-      '.dialog select,.dialog input{width:100%;box-sizing:border-box;background:#161916;border:1px solid #2a2d2a;border-radius:8px;color:#e7e7e7;padding:7px 9px;font-size:12px}' +
-      '.dialog select:focus,.dialog input:focus{outline:none;border-color:#3a5a3a}' +
-      '.dur{display:flex;gap:6px}.dur input{flex:1}.dur select{flex:1}' +
-      '.mrow{display:flex;gap:8px;margin-top:2px}' +
-      '.mrow button{flex:1;font-size:12px;padding:8px;border-radius:8px;border:1px solid #3a5a3a;background:#243024;color:#fff;cursor:pointer}' +
-      '.mrow #sellClose{background:#161916;color:#cfd3cf;border-color:#2a2d2a}' +
-      '.sstatus{font-size:11px;color:#9aa09a;min-height:14px;word-break:break-word}' +
       '.status{padding:7px 14px;font-size:10px;color:#6f756f;border-top:1px solid #1d201d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
       '</style>' +
       '<div class="box">' +
@@ -801,22 +606,11 @@
       '  <div class="controls" id="controls"></div>' +
       '  <div class="list" id="list"></div>' +
       '  <div class="foot">' +
-      '    <button id="sell">Vendre</button>' +
       '    <button id="pause">Pause</button>' +
       '    <button id="refresh">Actualiser</button>' +
       '    <button id="clear">Vider</button>' +
       '  </div>' +
       '  <div class="status" id="status">initialisation...</div>' +
-      '  <div class="modal" id="modal">' +
-      '    <div class="dialog">' +
-      '      <div class="dtitle">Mettre une carte en vente</div>' +
-      '      <span class="lbl">Carte</span><select id="sellCard"></select>' +
-      '      <span class="lbl">Prix de d\u00e9part</span><input id="sellPrice" type="number" min="1" placeholder="ex : 500">' +
-      '      <span class="lbl">Dur\u00e9e</span><div class="dur"><input id="sellDur" type="number" min="1" value="24"><select id="sellUnit"><option value="60">minutes</option><option value="3600" selected>heures</option><option value="86400">jours</option></select></div>' +
-      '      <div class="mrow"><button id="sellGo">Mettre en vente</button><button id="sellClose">Fermer</button></div>' +
-      '      <div class="sstatus" id="sellStatus"></div>' +
-      '    </div>' +
-      '  </div>' +
       '</div>';
 
     const controls = root.getElementById('controls');
@@ -986,28 +780,6 @@
       pauseBtn.textContent = ui.paused ? 'Reprendre' : 'Pause';
       pauseBtn.classList.toggle('active', ui.paused);
       if (!ui.paused) render();
-    });
-
-    root.getElementById('sell').addEventListener('click', function () { openSellForm(null); });
-    root.getElementById('sellClose').addEventListener('click', function () {
-      root.getElementById('modal').style.display = 'none';
-    });
-    root.getElementById('sellGo').addEventListener('click', function () {
-      const status = root.getElementById('sellStatus');
-      status.style.color = '#9aa09a';
-      const id = root.getElementById('sellCard').value;
-      const price = Number(root.getElementById('sellPrice').value);
-      const dur = Number(root.getElementById('sellDur').value);
-      const unit = Number(root.getElementById('sellUnit').value);
-      if (!id) { status.style.color = '#ff6b6b'; status.textContent = 'Choisis une carte.'; return; }
-      if (!price || price <= 0) { status.style.color = '#ff6b6b'; status.textContent = 'Indique un prix valide.'; return; }
-      if (!dur || dur <= 0) { status.style.color = '#ff6b6b'; status.textContent = 'Indique une dur\u00e9e valide.'; return; }
-      const card = (ownedCards || []).find(function (c) { return c.userCardId === id; });
-      if (!card) { status.style.color = '#ff6b6b'; status.textContent = 'Carte introuvable.'; return; }
-      submitListing(card, price, dur * unit * 1000, function (msg, isErr) {
-        status.style.color = isErr ? '#ff6b6b' : '#9fe29f';
-        status.textContent = msg;
-      });
     });
 
     document.documentElement.appendChild(host);
@@ -1404,8 +1176,6 @@
     scanPage();
     setTimeout(scanPage, 2500);
     setTimeout(scanPage, 6000);
-    setInterval(injectCollectionButtons, 3000);
-    setTimeout(injectCollectionButtons, 1500);
   }
 
   if (document.readyState === 'loading') {
@@ -1435,9 +1205,4 @@
     };
   };
   window.WM_GET_AUTH = function () { return { auth: capturedAuth, apiKey: capturedApiKey, url: lastAuctionsUrl }; };
-  window.WM_LAST_LISTING = listingTemplates[0] || null;
-  window.WM_LISTINGS = function () { return listingTemplates; };
-  window.WM_OWNED = function () { return fetchOwnedCards(); };
-  window.WM_SELL_FORM = openSellForm;
-  window.WM_SUBMIT_LISTING = submitListing;
 })();

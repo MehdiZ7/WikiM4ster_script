@@ -1,82 +1,41 @@
-# WikiMasters - Alerte enchères
+# WikiMasters - Userscripts
 
-Userscript [Tampermonkey](https://www.tampermonkey.net/) pour [wiki-masters.com](https://www.wiki-masters.com/).
+Userscripts [Tampermonkey](https://www.tampermonkey.net/) pour [wiki-masters.com](https://www.wiki-masters.com/).
 
-Il affiche un panneau flottant qui repère en temps quasi réel les **enchères du Marketplace qui se terminent bientôt**, avec leur rareté, leur prix courant et le **prix moyen constaté** de la carte.
+Deux scripts indépendants :
 
-> Script à usage personnel. Il ne mise pas à ta place : il ne fait qu'afficher et filtrer des données publiques du marketplace.
+| Script | Rôle |
+| --- | --- |
+| `wikimasters-auction-alert.user.js` | Repère les enchères qui se terminent bientôt (panneau flottant). |
+| `wikimasters-quick-sell.user.js` | Met une carte en vente en un clic depuis ta collection. |
+
+> Scripts à usage personnel. L'utilisation d'outils tiers peut être contraire aux conditions d'utilisation du site : à utiliser à tes risques.
 
 ---
+
+# 1) Alerte enchères
+
+Panneau flottant (bas à droite) qui repère en temps quasi réel les **enchères du Marketplace qui se terminent bientôt**, avec rareté, prix courant et **prix moyen constaté**. Il **ne mise jamais** à ta place.
 
 ## Fonctionnalités
 
-- **Détection des enchères qui se terminent bientôt** (fenêtres réglables : `0-2 min`, `1-2 min`, `0-5 min`, `0-10 min`, `Tout`).
-- **Compte à rebours** en direct ; les enchères hors fenêtre sont listées dans une section **« À venir »**.
-- **Section « Expirées »** : les enchères suivies qui viennent de se terminer restent affichées (nom conservé) pendant 2 min.
-- **Couleurs de rareté** (`C`, `PC`, `R`, `SR`, `UR`, `L`) : bordure, contour d'image et badge.
-- **Filtre multi-raretés** (sélection multiple).
-- **Filtres prix min / max** (optionnels).
-- **Recherche texte** (nom ou catégorie), insensible aux accents/majuscules.
-- **Tri** : fin imminente ou prix.
-- **Nombre d'annonces à charger** réglable (`100`, `300`, `1000`, `2000`).
-- **Prix moyen constaté** par carte (issu des ventes passées `final_price`), affiché en pastille et injecté en badge `~prix` sur les cartes du site.
-- **Bouton Pause** et **gel de la liste au survol** pour cliquer sans que ça bouge.
-- **Panneau réductible**, **largeur adaptative** (`min(380px, 92vw)`).
-- **Réglages économes automatiques sur mobile** (moins de requêtes, moins de batterie).
-- **Préférences mémorisées** (fenêtre, raretés, prix, recherche, tri, limite).
-- **Mettre une carte en vente** directement (bouton `Vendre`), sans passer par le menu enchères, avec choix du prix de départ et de la durée.
-- **Sans son**.
-
-### Mettre une carte en vente
-
-Le bouton **`Vendre`** ouvre un formulaire : carte (issue de ta collection), prix de départ, durée (minutes/heures/jours). Sur la page de collection, un bouton **`Vendre`** est aussi ajouté directement sur chaque carte.
-
-> Important : le script ne devine pas l'API du site. Il apprend la requête de mise en vente **la première fois que tu listes une carte manuellement** (avec le script actif), puis la rejoue en remplaçant le prix, la durée et la carte. **Fais donc une mise en vente manuelle une fois** avant d'utiliser le bouton `Vendre`.
-
-Pour vérifier ce que le script a appris : `WM_LAST_LISTING` dans la console.
-
----
-
-## Installation
-
-### Ordinateur
-
-1. Installer l'extension **Tampermonkey** (Chrome, Firefox, Edge, Opera...).
-2. Ouvrir le fichier `wikimasters-auction-alert.user.js` puis cliquer sur **Installer**, ou dans Tampermonkey : *Ajouter un nouveau script* → coller le contenu → `Ctrl+S`.
-3. Aller sur [wiki-masters.com](https://www.wiki-masters.com/), se connecter, puis ouvrir le **Marketplace**.
-
-### Android
-
-Chrome Android ne supporte pas les extensions. Utiliser :
-
-- **Firefox Android + Tampermonkey** (recommandé), ou
-- **Kiwi Browser** (Chromium acceptant les extensions du Chrome Web Store) + Tampermonkey.
-
-Puis :
-
-1. Se connecter à `wiki-masters.com` dans ce navigateur.
-2. Installer le script (coller le contenu, ou *Utilitaires → Importer un fichier*).
-3. Ouvrir le **Marketplace** : le panneau apparaît.
-
-Astuce maintenance : héberger le `.user.js` (par ex. un Gist « raw ») et l'installer par URL pour mettre à jour en un clic.
-
----
+- **Enchères se terminant bientôt** (fenêtres `0-2 min`, `1-2 min`, `0-5 min`, `0-10 min`, `Tout`).
+- **Compte à rebours** en direct ; section **« À venir »** pour celles hors fenêtre.
+- **Section « Expirées »** : les enchères suivies gardent leur nom 2 min après la fin.
+- **Couleurs de rareté** (`C`, `PC`, `R`, `SR`, `UR`, `L`), **filtre multi-raretés**.
+- **Filtres prix min / max** (optionnels), **recherche texte** (nom/catégorie, sans accents).
+- **Tri** fin imminente / prix, **nombre d'annonces à charger** (`100`→`2000`).
+- **Prix moyen constaté** (pastille + badge `~prix` sur les cartes du site).
+- **Pause** et **gel de la liste au survol**, panneau **réductible**, **largeur adaptative**.
+- **Réglages économes sur mobile**, **préférences mémorisées**, **sans son**.
 
 ## Utilisation
 
-Une fois connecté et sur le **Marketplace** :
+Sur le **Marketplace** : le panneau s'affiche. Bouton **réduire / agrandir**, filtres **Fenêtre / Raretés / Recherche / Prix / Trier / Charger**, boutons **Pause**, **Actualiser**, **Vider**.
 
-- Le panneau s'affiche en bas à droite. Le bouton **réduire / agrandir** le replie sur sa barre de titre.
-- **Fenêtre** : choisir la plage de temps à surveiller.
-- **Raretés** : cliquer une ou plusieurs pastilles (`Toutes` pour réinitialiser).
-- **Rechercher** : filtrer par nom/catégorie.
-- **Prix min / max** : filtrer par budget (laisser vide = désactivé).
-- **Trier** : `fin imminente` ou `prix`.
-- **Charger** : nombre d'annonces interrogées.
-- **Pause** : fige la liste. **Actualiser** : relance une requête avec tes filtres.
-- Ligne de statut en bas : `jeton OK`, `HTTP 200`, `lignes N`, `stock M`, `maj Ns`.
+Ligne de statut : `jeton OK`, `HTTP 200`, `lignes N`, `stock M`, `maj Ns`.
 
-### Outils de debug (console F12)
+## Debug (console F12)
 
 | Commande | Rôle |
 | --- | --- |
@@ -87,35 +46,70 @@ Une fois connecté et sur le **Marketplace** :
 | `WM_REFRESH_PRICES()` | Recalcule les prix moyens |
 | `WM_PRICE_CACHE` | Moyennes en cache par carte |
 | `WM_GET_PREFS()` / `WM_SAVE_PREFS()` | Préférences mémorisées |
-| `WM_LAST_LISTING` | Dernière requête de mise en vente apprise |
-| `WM_OWNED()` | Cartes de ta collection |
-| `WM_SELL_FORM()` | Ouvre le formulaire de vente |
-| `WM_SUBMIT_LISTING(card, prix, duréeMs, cb)` | Rejoue une mise en vente |
 
 ---
 
-## Fonctionnement
+# 2) Vente rapide
 
-Le site tourne sur **Next.js + Supabase**. Le script :
+Ajoute un **bouton `Vendre` en overlay sur chaque carte de ta collection**, et un bouton flottant **« ＋ Vendre une carte »**. Un formulaire s'ouvre : carte, **prix de départ**, **durée** (presets 1 h / 6 h / 12 h / 24 h / 3 j). En un clic, la carte est mise en vente sans passer par le menu.
 
-1. capture les données d'enchères déjà chargées par le site (hooks `fetch`, `XMLHttpRequest`, `WebSocket` Supabase) ;
-2. réutilise le **jeton de session** du site pour interroger la table `auctions` ;
-3. enrichit les cartes via la table publique `cards` ;
-4. calcule le **prix moyen** à partir de la colonne `final_price` des ventes passées.
+## ⚠️ Étape indispensable (une seule fois)
+
+Le script ne devine pas l'API du site : il **apprend la requête** de mise en vente que fait le site, puis la **rejoue** en remplaçant carte / prix / durée.
+
+1. Fais **une mise en vente manuelle** (menu du site) **avec le script actif**.
+2. Le script capture la requête.
+3. Ensuite, l'overlay et le formulaire fonctionnent en un clic.
+
+Tant que tu n'as pas fait cette mise en vente, le formulaire affiche un message d'aide (bloc jaune).
+
+## Debug (console F12)
+
+| Commande | Rôle |
+| --- | --- |
+| `WMQS_LAST` | Dernière requête de mise en vente apprise |
+| `WMQS_LISTINGS()` | Historique des requêtes apprises |
+| `WMQS_OWNED()` | Cartes de ta collection |
+| `WMQS_FORM()` | Ouvre le formulaire |
+| `WMQS_SUBMIT(card, prix, duréeMs, cb)` | Rejoue une mise en vente |
+
+---
+
+# Installation
+
+## Ordinateur
+
+1. Installer l'extension **Tampermonkey** (Chrome, Firefox, Edge, Opera...).
+2. Ouvrir chaque fichier `.user.js` puis **Installer** (ou dans Tampermonkey : *Ajouter un nouveau script* → coller → `Ctrl+S`).
+
+## Android
+
+Chrome Android ne supporte pas les extensions. Utiliser :
+
+- **Firefox Android + Tampermonkey** (recommandé), ou
+- **Kiwi Browser** (Chromium acceptant les extensions du Chrome Web Store) + Tampermonkey.
+
+Puis se connecter à `wiki-masters.com` et installer les scripts (coller, ou *Utilitaires → Importer un fichier*).
+
+Astuce : héberger les `.user.js` (par ex. un Gist « raw ») et les installer par URL pour mettre à jour en un clic.
+
+---
+
+# Fonctionnement
+
+Le site tourne sur **Next.js + Supabase**. Les scripts :
+
+1. capturent les données et le **jeton de session** du site (hooks `fetch`, `XMLHttpRequest`, `WebSocket`) ;
+2. interrogent les tables `auctions` (et `cards`, publique) avec ce jeton ;
+3. calculent le **prix moyen** via la colonne `final_price` des ventes passées.
 
 Aucune donnée n'est envoyée ailleurs : tout reste dans le navigateur.
 
 ---
 
-## Dépannage
+# Dépannage
 
-- **Panneau vide** : vérifie la ligne de statut. `lignes 0` = la base n'a renvoyé aucune enchère à venir (normal, le marketplace fonctionne par vagues). `lignes 500` mais rien à l'écran = aucune enchère dans la fenêtre choisie → élargis la fenêtre ou attends.
-- **`jeton -` / HTTP 401** : le jeton de session dure ~1 h. Reconnecte-toi ou recharge la page wiki-masters ; le script le recapture automatiquement.
-- **Rien ne bouge** : le bouton **Pause** est peut-être actif, ou la souris est posée sur la liste (gel au survol).
-- **Prix moyen absent** : la colonne `final_price` n'est peut-être pas encore renseignée pour ces cartes.
-
----
-
-## Avertissement
-
-Ce script automatise uniquement l'**affichage**. Il ne place aucune enchère. L'utilisation d'outils tiers peut être contraire aux conditions d'utilisation du site : à utiliser à tes risques.
+- **Panneau vide** : regarde la ligne de statut. `lignes 0` = aucune enchère à venir renvoyée (le marketplace fonctionne par vagues). `lignes 500` mais rien à l'écran = élargis la fenêtre.
+- **`jeton -` / HTTP 401** : le jeton dure ~1 h. Reconnecte-toi ou recharge la page ; il est recapturé automatiquement.
+- **Vente : rien ne se passe** : vérifie `WMQS_LAST`. S'il est `null`, refais une mise en vente manuelle avec le script actif.
+- **Prix moyen absent** : la colonne `final_price` n'est pas encore renseignée pour ces cartes.
