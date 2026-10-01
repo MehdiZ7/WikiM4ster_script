@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WikiMasters - Vente rapide
 // @namespace    https://wiki-masters.com/
-// @version      1.0.0
-// @description  Met une carte en vente en un clic depuis ta collection : overlay "Vendre", prix de depart et duree. Apprend puis rejoue la requete du site.
+// @version      2.0.0
+// @description  Survole une carte de ta collection et mets-la en vente en UN clic pour 1 credit / 30 min. Apprend puis rejoue la requete du site.
 // @author       you
 // @match        https://www.wiki-masters.com/*
 // @match        https://wiki-masters.com/*
@@ -15,10 +15,8 @@
   'use strict';
 
   const CONFIG = {
-    STORAGE_KEY: 'wm_quicksell_prefs_v1',
-    DEFAULT_PRICE: 10,
-    DEFAULT_DURATION: 24,
-    DEFAULT_UNIT: 3600,
+    PRICE: 1,
+    MINUTES: 30,
     DEBUG: false
   };
 
@@ -86,22 +84,34 @@
 
   function looksLikeWrite(url, method) {
     if (!method || String(method).toUpperCase() === 'GET') return false;
-    return /auction|marketplace|listing|sell|encher|\/api\//i.test(url || '');
+    return /rest\/v1|auction|marketplace|listing|sell|encher|\/api\/|rpc\//i.test(url || '');
+  }
+
+  function isListingTemplate(t) {
+    const s = (t.url || '') + ' ' + (t.body || '');
+    return /auction|current_bid|end_at|listing|encher/i.test(s);
   }
 
   function recordListing(url, method, headers, body) {
     try {
-      listingTemplates.unshift({
+      const entry = {
         url: url,
         method: String(method || 'POST').toUpperCase(),
         headers: headers || {},
         body: body == null ? null : (typeof body === 'string' ? body : JSON.stringify(body)),
         ts: Date.now()
-      });
-      listingTemplates = listingTemplates.slice(0, 10);
+      };
+      listingTemplates.unshift(entry);
+      listingTemplates = listingTemplates.slice(0, 15);
       window.WMQS_LAST = listingTemplates[0];
-      log('captured listing request', url);
+      updateLauncher();
+      log('captured write', url, isListingTemplate(entry) ? '(listing?)' : '');
     } catch (e) {}
+  }
+
+  function bestTemplate() {
+    const listing = listingTemplates.filter(isListingTemplate);
+    return listing[0] || listingTemplates[0] || null;
   }
 
   function hookFetch() {
@@ -185,7 +195,7 @@
               image: c.image_url || null,
               rarity: c.rarity || null
             };
-          }).sort(function (a, b) { return String(a.title).localeCompare(String(b.title)); });
+          });
           ownedPending = null;
           return ownedCards;
         });
@@ -194,38 +204,46 @@
     return ownedPending;
   }
 
-  function deepSubstitute(node, ctx) {
+  function substitute(node, ctx) {
     if (!node || typeof node !== 'object') return;
     for (const k of Object.keys(node)) {
       const v = node[k];
-      if (v && typeof v === 'object') { deepSubstitute(v, ctx); continue; }
+      if (v && typeof v === 'object') { substitute(v, ctx); continue; }
       const key = String(k).toLowerCase();
-      if (ctx.userCardId && /user_?card/.test(key)) node[k] = ctx.userCardId;
-      else if (ctx.cardId && /(^|_)card(_?id)?$/.test(key) && !/user/.test(key)) node[k] = ctx.cardId;
-      else if (/(price|bid|amount|montant|prix)/.test(key) && typeof v === 'number') node[k] = ctx.price;
-      else if (/(end_?at|ends_?at|endat|expire|deadline|end_date)/.test(key)) node[k] = ctx.endISO;
-      else if (/(duration|duree|length)/.test(key) && typeof v === 'number') node[k] = ctx.durationHours;
+      if (/user_?card/.test(key)) { node[k] = ctx.userCardId; continue; }
+      if (/(^|_)card(_?id)?$/.test(key) && !/user/.test(key)) { node[k] = ctx.cardId; continue; }
+      if (/(price|bid|amount|montant|prix|credit)/.test(key) && typeof v === 'number') { node[k] = ctx.price; continue; }
+      if (/(end_?at|ends_?at|endat|expire|deadline|end_date)/.test(key)) { node[k] = ctx.endISO; continue; }
+      if (/(duration|duree|length)/.test(key) && typeof v === 'number') {
+        if (/minute|_min\b|mins/.test(key)) node[k] = ctx.minutes;
+        else if (/hour|heure|_h\b|hrs/.test(key)) node[k] = Math.round(ctx.minutes / 60 * 100) / 100;
+        else if (/second|seconde|_s\b|secs/.test(key)) node[k] = ctx.minutes * 60;
+        else if (/day|jour/.test(key)) node[k] = Math.round(ctx.minutes / 1440 * 1000) / 1000;
+        else if (v >= 600) node[k] = ctx.minutes * 60;
+        else if (v <= 1) node[k] = Math.round(ctx.minutes / 60 * 100) / 100;
+        else node[k] = ctx.minutes;
+      }
     }
   }
 
-  function submitListing(card, price, durationMs, onStatus) {
-    const tpl = listingTemplates[0];
+  function submitListing(card, onStatus) {
+    const tpl = bestTemplate();
     if (!tpl) {
-      onStatus('Aucune requ\u00eate apprise. Fais UNE mise en vente manuelle (avec le script actif), puis r\u00e9essaie.', true);
+      onStatus('Aucune requete apprise : fais UNE mise en vente manuelle (prix 1, duree 30 min) avec ce script actif.', true);
       return;
     }
     const ctx = {
-      price: Number(price),
+      price: CONFIG.PRICE,
+      minutes: CONFIG.MINUTES,
       cardId: card.cardId,
       userCardId: card.userCardId,
-      endISO: new Date(Date.now() + durationMs).toISOString(),
-      durationHours: Math.round(durationMs / 3600000 * 100) / 100
+      endISO: new Date(Date.now() + CONFIG.MINUTES * 60000).toISOString()
     };
     let body = tpl.body;
     if (body) {
       try {
         const obj = JSON.parse(body);
-        deepSubstitute(obj, ctx);
+        substitute(obj, ctx);
         body = JSON.stringify(obj);
       } catch (e) {
         body = body.replace(/((?:price|bid|current_bid|amount)=)[^&]*/gi, '$1' + ctx.price)
@@ -237,29 +255,101 @@
     window.fetch(tpl.url, { method: tpl.method, headers: headers, body: body, credentials: 'include' })
       .then(function (r) { return r.text().then(function (t) { return { status: r.status, text: t }; }); })
       .then(function (res) {
-        if (res.status >= 400) onStatus('Erreur ' + res.status + ' : ' + res.text.slice(0, 200), true);
-        else onStatus('Ench\u00e8re lanc\u00e9e !', false);
+        if (res.status >= 400) onStatus('Erreur ' + res.status + ' : ' + res.text.slice(0, 180), true);
+        else onStatus('Mise en vente OK (1 credit / 30 min).', false);
       })
-      .catch(function (e) { onStatus('Erreur r\u00e9seau : ' + (e && e.message), true); });
+      .catch(function (e) { onStatus('Erreur reseau : ' + (e && e.message), true); });
   }
 
-  function loadPrefs() {
-    let p = {};
-    try { p = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY) || '{}'); } catch (e) {}
-    CONFIG.DEFAULT_PRICE = typeof p.price === 'number' ? p.price : CONFIG.DEFAULT_PRICE;
-    CONFIG.DEFAULT_DURATION = typeof p.duration === 'number' ? p.duration : CONFIG.DEFAULT_DURATION;
-    CONFIG.DEFAULT_UNIT = typeof p.unit === 'number' ? p.unit : CONFIG.DEFAULT_UNIT;
+  function slugToOwned(src, cards) {
+    const m = String(src || '').match(/cards(?:%2F|\/)([^.?&/]+)/i);
+    const slug = m && m[1] && m[1].toLowerCase();
+    if (!slug) return null;
+    return cards.find(function (c) { return c.image && c.image.toLowerCase().indexOf(slug) !== -1; }) || null;
   }
 
-  function savePrefs() {
+  function toast(msg, isErr) {
     if (!ui) return;
+    let t = ui.root.getElementById('qsToast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'qsToast';
+      t.style.cssText = 'position:fixed;left:50%;bottom:80px;transform:translateX(-50%);z-index:2147483647;' +
+        'max-width:90vw;padding:10px 14px;border-radius:10px;font-family:system-ui,sans-serif;font-size:13px;' +
+        'font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.5);transition:opacity .2s;';
+      ui.root.appendChild(t);
+    }
+    t.textContent = msg;
+    t.style.background = isErr ? '#3a1414' : '#1f3a1f';
+    t.style.color = isErr ? '#ff9a9a' : '#9fe29f';
+    t.style.opacity = '1';
+    clearTimeout(t.__timer);
+    t.__timer = setTimeout(function () { t.style.opacity = '0'; }, 3500);
+  }
+
+  function quickSell(img) {
+    const src = img.currentSrc || img.src || '';
+    fetchOwnedCards().then(function (cards) {
+      const card = slugToOwned(src, cards);
+      if (!card) {
+        toast('Carte introuvable dans ta collection.', true);
+        return;
+      }
+      submitListing(card, function (msg, isErr) { toast(msg, isErr); });
+    }).catch(function () {
+      toast('Connecte-toi puis reessaie.', true);
+    });
+  }
+
+  function attachHover(img) {
+    const container = img.closest('a') || img.parentElement;
+    if (!container || container.dataset.wmHover) return;
+    container.dataset.wmHover = '1';
+    let btn = null;
+    function show() {
+      if (btn) return;
+      if (getComputedStyle(container).position === 'static') container.style.position = 'relative';
+      btn = document.createElement('button');
+      btn.className = 'wm-quick-sell-btn';
+      btn.textContent = 'Vendre ' + CONFIG.PRICE + ' \u00b7 ' + CONFIG.MINUTES + ' min';
+      btn.style.cssText = 'position:absolute;left:50%;bottom:8px;transform:translateX(-50%);z-index:20;' +
+        'padding:5px 10px;border-radius:8px;border:1px solid #3a5a3a;background:rgba(31,58,31,.96);' +
+        'color:#9fe29f;font-size:12px;font-weight:700;cursor:pointer;font-family:system-ui,sans-serif;white-space:nowrap;';
+      btn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        quickSell(img);
+      });
+      btn.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
+      container.appendChild(btn);
+    }
+    function hide() {
+      if (btn) { btn.remove(); btn = null; }
+    }
+    container.addEventListener('mouseenter', show);
+    container.addEventListener('mouseleave', hide);
+  }
+
+  function scanCards() {
     try {
-      localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify({
-        price: Number(ui.root.getElementById('qsPrice').value) || CONFIG.DEFAULT_PRICE,
-        duration: Number(ui.root.getElementById('qsDur').value) || CONFIG.DEFAULT_DURATION,
-        unit: Number(ui.root.getElementById('qsUnit').value) || CONFIG.DEFAULT_UNIT
-      }));
+      if (/marketplace/i.test(location.pathname)) return;
+      const imgs = document.querySelectorAll('img');
+      for (const img of imgs) {
+        const src = img.currentSrc || img.src || '';
+        if (!/cards(%2F|\/)/i.test(src)) continue;
+        attachHover(img);
+      }
     } catch (e) {}
+  }
+
+  function updateLauncher() {
+    if (!ui) return;
+    const l = ui.root.getElementById('qsLaunch');
+    if (!l) return;
+    const ready = !!bestTemplate();
+    l.textContent = ready ? ('\uFF0B Vendre ' + CONFIG.PRICE + ' \u00b7 ' + CONFIG.MINUTES + ' min') : '\uFF0B Vendre (1 mise en vente manuelle requise)';
+    l.style.borderColor = ready ? '#3a5a3a' : '#7a5a1a';
+    l.style.color = ready ? '#9fe29f' : '#ffd166';
   }
 
   function buildUI() {
@@ -270,185 +360,86 @@
     root.innerHTML =
       '<style>' +
       ':host{all:initial}' +
-      '.launch{position:fixed;left:14px;bottom:14px;z-index:2147483646;padding:9px 14px;border-radius:99px;border:1px solid #3a5a3a;' +
-        'background:#1f3a1f;color:#9fe29f;font-family:system-ui,Segoe UI,Roboto,sans-serif;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.5)}' +
+      '.launch{position:fixed;left:14px;bottom:14px;z-index:2147483646;padding:9px 14px;border-radius:99px;' +
+        'border:1px solid #3a5a3a;background:#1f3a1f;color:#9fe29f;font-family:system-ui,Segoe UI,Roboto,sans-serif;' +
+        'font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.5)}' +
       '.modal{display:none;position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:16px}' +
       '.dialog{background:#0c0d0c;color:#e7e7e7;border:1px solid #2a2d2a;border-radius:12px;padding:16px;width:min(340px,94vw);' +
-        'display:flex;flex-direction:column;gap:9px;font-family:system-ui,Segoe UI,Roboto,sans-serif;box-shadow:0 20px 50px rgba(0,0,0,.6)}' +
+        'display:flex;flex-direction:column;gap:9px;font-family:system-ui,Segoe UI,Roboto,sans-serif}' +
       '.dtitle{font-size:15px;font-weight:700}' +
-      '.dsub{font-size:11px;color:#8b918b;margin-top:-4px}' +
       '.lbl{font-size:10.5px;color:#8b918b;text-transform:uppercase;letter-spacing:.5px}' +
-      'select,input{width:100%;box-sizing:border-box;background:#161916;border:1px solid #2a2d2a;border-radius:8px;color:#e7e7e7;padding:8px 10px;font-size:13px}' +
-      'select:focus,input:focus{outline:none;border-color:#3a5a3a}' +
-      '.quick{display:flex;gap:6px;flex-wrap:wrap}' +
-      '.quick button{font-size:11px;padding:3px 9px;border-radius:8px;border:1px solid #2a2d2a;background:#161916;color:#cfd3cf;cursor:pointer}' +
-      '.quick button.active{background:#243024;border-color:#3a5a3a;color:#fff}' +
-      '.dur{display:flex;gap:6px}.dur input{flex:1}.dur select{flex:1}' +
-      '.mrow{display:flex;gap:8px}' +
-      '.mrow button{flex:1;font-size:13px;padding:9px;border-radius:8px;border:1px solid #3a5a3a;background:#243024;color:#fff;cursor:pointer}' +
+      'select{width:100%;box-sizing:border-box;background:#161916;border:1px solid #2a2d2a;border-radius:8px;color:#e7e7e7;padding:8px 10px;font-size:13px}' +
+      '.mrow{display:flex;gap:8px}.mrow button{flex:1;font-size:13px;padding:9px;border-radius:8px;border:1px solid #3a5a3a;background:#243024;color:#fff;cursor:pointer}' +
       '.mrow #qsClose{background:#161916;color:#cfd3cf;border-color:#2a2d2a}' +
       '.sstatus{font-size:12px;color:#9aa09a;min-height:16px;word-break:break-word}' +
       '.learn{font-size:11px;color:#ffd166;line-height:1.5;background:#1a1708;border:1px solid #4a3d12;border-radius:8px;padding:8px}' +
       '</style>' +
-      '<button class="launch" id="qsLaunch">\uFF0B Vendre une carte</button>' +
+      '<button class="launch" id="qsLaunch">\uFF0B Vendre</button>' +
       '<div class="modal" id="qsModal">' +
       '  <div class="dialog">' +
-      '    <div class="dtitle">Mettre une carte en vente</div>' +
-      '    <div class="dsub" id="qsCardName"></div>' +
+      '    <div class="dtitle">Vendre 1 \u00b7 30 min</div>' +
+      '    <div class="learn" id="qsLearn">Fais UNE mise en vente manuelle (prix 1, duree 30 min) avec ce script actif : il apprendra la requete, puis le survol des cartes suffira.</div>' +
       '    <span class="lbl">Carte</span><select id="qsCard"></select>' +
-      '    <span class="lbl">Prix de d\u00e9part</span><input id="qsPrice" type="number" min="1" value="' + CONFIG.DEFAULT_PRICE + '">' +
-      '    <span class="lbl">Dur\u00e9e</span><div class="dur"><input id="qsDur" type="number" min="1" value="' + CONFIG.DEFAULT_DURATION + '"><select id="qsUnit">' +
-      '      <option value="60">minutes</option><option value="3600">heures</option><option value="86400">jours</option></select></div>' +
-      '    <div class="quick" id="qsQuick"></div>' +
       '    <div class="mrow"><button id="qsGo">Mettre en vente</button><button id="qsClose">Fermer</button></div>' +
       '    <div class="sstatus" id="qsStatus"></div>' +
       '  </div>' +
       '</div>';
 
-    const launch = root.getElementById('qsLaunch');
-    const modal = root.getElementById('qsModal');
-    launch.addEventListener('click', function () { openForm(null); });
-    root.getElementById('qsClose').addEventListener('click', function () { modal.style.display = 'none'; savePrefs(); });
-    modal.addEventListener('click', function (e) { if (e.target === modal) { modal.style.display = 'none'; savePrefs(); } });
-
-    const unitSel = root.getElementById('qsUnit');
-    unitSel.value = String(CONFIG.DEFAULT_UNIT);
-    root.getElementById('qsPrice').addEventListener('change', savePrefs);
-    root.getElementById('qsDur').addEventListener('change', savePrefs);
-    unitSel.addEventListener('change', savePrefs);
-
-    const quick = root.getElementById('qsQuick');
-    const presets = [{ l: '1 h', d: 1, u: 3600 }, { l: '6 h', d: 6, u: 3600 }, { l: '12 h', d: 12, u: 3600 }, { l: '24 h', d: 24, u: 3600 }, { l: '3 j', d: 3, u: 86400 }];
-    for (const p of presets) {
-      const b = document.createElement('button');
-      b.textContent = p.l;
-      b.addEventListener('click', function () {
-        root.getElementById('qsDur').value = String(p.d);
-        unitSel.value = String(p.u);
-        savePrefs();
-      });
-      quick.appendChild(b);
-    }
-
+    root.getElementById('qsLaunch').addEventListener('click', function () { openForm(); });
+    root.getElementById('qsClose').addEventListener('click', function () {
+      root.getElementById('qsModal').style.display = 'none';
+    });
+    root.getElementById('qsModal').addEventListener('click', function (e) {
+      if (e.target === this) this.style.display = 'none';
+    });
     root.getElementById('qsGo').addEventListener('click', function () {
       const status = root.getElementById('qsStatus');
       status.style.color = '#9aa09a';
       const id = root.getElementById('qsCard').value;
-      const price = Number(root.getElementById('qsPrice').value);
-      const dur = Number(root.getElementById('qsDur').value);
-      const unit = Number(unitSel.value);
-      if (!id) { status.style.color = '#ff6b6b'; status.textContent = 'Choisis une carte.'; return; }
-      if (!price || price <= 0) { status.style.color = '#ff6b6b'; status.textContent = 'Indique un prix valide.'; return; }
-      if (!dur || dur <= 0) { status.style.color = '#ff6b6b'; status.textContent = 'Indique une dur\u00e9e valide.'; return; }
       const card = (ownedCards || []).find(function (c) { return c.userCardId === id; });
-      if (!card) { status.style.color = '#ff6b6b'; status.textContent = 'Carte introuvable.'; return; }
-      savePrefs();
-      if (!listingTemplates.length) {
-        status.style.color = '#ffd166';
-        status.textContent = 'Lis d\u2019abord le bloc jaune ci-dessus une fois.';
-        return;
-      }
-      submitListing(card, price, dur * unit * 1000, function (msg, isErr) {
-        status.style.color = isErr ? '#ff6b6b' : '#9fe29f';
+      if (!card) { status.style.color = '#ff6b6b'; status.textContent = 'Choisis une carte.'; return; }
+      submitListing(card, function (msg, isErr) {
+        status.style.color = isErr ? '#ff9a9a' : '#9fe29f';
         status.textContent = msg;
+        toast(msg, isErr);
       });
     });
 
     document.documentElement.appendChild(host);
     ui = { host: host, root: root };
+    updateLauncher();
   }
 
-  function ensureLearnNotice() {
-    if (!ui) return;
-    const dialog = ui.root.querySelector('.dialog');
-    let el = ui.root.getElementById('qsLearn');
-    if (listingTemplates.length) {
-      if (el) el.remove();
-      return;
-    }
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'qsLearn';
-      el.className = 'learn';
-      el.textContent = 'Pour activer la vente en 1 clic : fais UNE mise en vente manuelle (menu du site) avec ce script actif. Le script apprendra la requ\u00eate, puis tout sera automatique.';
-      dialog.insertBefore(el, dialog.children[1] || null);
-    }
-  }
-
-  function openForm(imageSrc, forcedCard) {
+  function openForm() {
     if (!ui) return;
     const modal = ui.root.getElementById('qsModal');
     modal.style.display = 'flex';
+    ui.root.getElementById('qsLearn').style.display = bestTemplate() ? 'none' : 'block';
     const sel = ui.root.getElementById('qsCard');
-    const nameEl = ui.root.getElementById('qsCardName');
-    const status = ui.root.getElementById('qsStatus');
-    status.textContent = '';
-    ensureLearnNotice();
-    nameEl.textContent = '';
     sel.innerHTML = '<option>Chargement...</option>';
     fetchOwnedCards().then(function (cards) {
       sel.innerHTML = '';
-      if (!cards.length) { sel.innerHTML = '<option value="">Aucune carte trouv\u00e9e</option>'; return; }
+      if (!cards.length) { sel.innerHTML = '<option value="">Aucune carte trouvee</option>'; return; }
+      cards.sort(function (a, b) { return String(a.title).localeCompare(String(b.title)); });
       for (const c of cards) {
         const opt = document.createElement('option');
         opt.value = c.userCardId;
         opt.textContent = c.title + (c.rarity ? ' [' + c.rarity + ']' : '');
         sel.appendChild(opt);
       }
-      let chosen = forcedCard || null;
-      if (!chosen && imageSrc) {
-        const m = imageSrc.match(/cards(?:%2F|\/)([^.?&/]+)/i);
-        const slug = m && m[1] && m[1].toLowerCase();
-        if (slug) chosen = cards.find(function (c) { return c.image && c.image.toLowerCase().indexOf(slug) !== -1; }) || null;
-      }
-      if (chosen) {
-        sel.value = chosen.userCardId;
-        nameEl.textContent = chosen.title + (chosen.rarity ? ' \u00b7 ' + chosen.rarity : '');
-      }
-      sel.onchange = function () {
-        const c = cards.find(function (x) { return x.userCardId === sel.value; });
-        nameEl.textContent = c ? (c.title + (c.rarity ? ' \u00b7 ' + c.rarity : '')) : '';
-      };
     }).catch(function () {
-      sel.innerHTML = '<option value="">Connecte-toi puis r\u00e9essaie</option>';
+      sel.innerHTML = '<option value="">Connecte-toi puis reessaie</option>';
     });
   }
 
-  function injectButtons() {
-    try {
-      if (!/collection|album|inventaire|inventory|cartes|profile|compte/i.test(location.pathname)) return;
-      const imgs = document.querySelectorAll('img');
-      for (const img of imgs) {
-        const src = img.currentSrc || img.src || '';
-        if (!/cards(%2F|\/)/i.test(src)) continue;
-        const holder = img.parentElement;
-        if (!holder || holder.querySelector('.wm-quick-sell-btn')) continue;
-        if (getComputedStyle(holder).position === 'static') holder.style.position = 'relative';
-        const btn = document.createElement('button');
-        btn.className = 'wm-quick-sell-btn';
-        btn.textContent = 'Vendre';
-        btn.style.cssText = 'position:absolute;top:4px;right:4px;z-index:20;padding:3px 8px;border-radius:6px;' +
-          'border:1px solid #3a5a3a;background:rgba(31,58,31,.95);color:#9fe29f;font-size:11px;font-weight:700;' +
-          'cursor:pointer;font-family:system-ui,sans-serif;';
-        btn.addEventListener('click', function (ev) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          openForm(src, null);
-        });
-        btn.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
-        holder.appendChild(btn);
-      }
-    } catch (e) {}
-  }
-
-  loadPrefs();
   hookFetch();
   hookXHR();
 
   function boot() {
     buildUI();
-    setInterval(injectButtons, 2000);
-    setTimeout(injectButtons, 1000);
+    setInterval(scanCards, 1500);
+    setInterval(updateLauncher, 2000);
+    setTimeout(scanCards, 800);
   }
 
   if (document.readyState === 'loading') {
@@ -459,6 +450,7 @@
 
   window.WMQS_LAST = listingTemplates[0] || null;
   window.WMQS_LISTINGS = function () { return listingTemplates; };
+  window.WMQS_BEST = bestTemplate;
   window.WMQS_OWNED = function () { return fetchOwnedCards(); };
   window.WMQS_FORM = openForm;
   window.WMQS_SUBMIT = submitListing;

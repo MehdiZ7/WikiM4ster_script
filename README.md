@@ -7,7 +7,7 @@ Deux scripts indépendants :
 | Script | Rôle |
 | --- | --- |
 | `wikimasters-auction-alert.user.js` | Repère les enchères qui se terminent bientôt (panneau flottant). |
-| `wikimasters-quick-sell.user.js` | Met une carte en vente en un clic depuis ta collection. |
+| `wikimasters-quick-sell.user.js` | Survole une carte de ta collection et vends-la en un clic (1 crédit / 30 min). |
 
 > Scripts à usage personnel. L'utilisation d'outils tiers peut être contraire aux conditions d'utilisation du site : à utiliser à tes risques.
 
@@ -51,27 +51,30 @@ Ligne de statut : `jeton OK`, `HTTP 200`, `lignes N`, `stock M`, `maj Ns`.
 
 # 2) Vente rapide
 
-Ajoute un **bouton `Vendre` en overlay sur chaque carte de ta collection**, et un bouton flottant **« ＋ Vendre une carte »**. Un formulaire s'ouvre : carte, **prix de départ**, **durée** (presets 1 h / 6 h / 12 h / 24 h / 3 j). En un clic, la carte est mise en vente sans passer par le menu.
+**Passe la souris sur une carte de ta collection** → un bouton **`Vendre 1 · 30 min`** apparaît sur la carte → **un clic** et la carte est mise en vente pour **1 crédit / 30 min**, sans passer par le menu.
+
+Un bouton flottant **« ＋ Vendre »** (en bas à gauche) permet aussi de choisir la carte dans une liste.
 
 ## ⚠️ Étape indispensable (une seule fois)
 
-Le script ne devine pas l'API du site : il **apprend la requête** de mise en vente que fait le site, puis la **rejoue** en remplaçant carte / prix / durée.
+Le script ne devine pas l'API du site : il **apprend la requête** de mise en vente que fait le site, puis la **rejoue** en changeant seulement la carte (le prix/durée restent 1 / 30 min).
 
-1. Fais **une mise en vente manuelle** (menu du site) **avec le script actif**.
-2. Le script capture la requête.
-3. Ensuite, l'overlay et le formulaire fonctionnent en un clic.
+1. Fais **une mise en vente manuelle** (menu du site) **avec le prix 1 et la durée 30 min**, script actif.
+2. Le script capture la requête (le bouton flottant passe au vert).
+3. Ensuite, le survol des cartes suffit.
 
-Tant que tu n'as pas fait cette mise en vente, le formulaire affiche un message d'aide (bloc jaune).
+Tant que ce n'est pas fait, le bouton flottant reste **jaune** et le formulaire affiche un message d'aide.
 
 ## Debug (console F12)
 
 | Commande | Rôle |
 | --- | --- |
-| `WMQS_LAST` | Dernière requête de mise en vente apprise |
+| `WMQS_LAST` | Dernière requête apprise |
 | `WMQS_LISTINGS()` | Historique des requêtes apprises |
+| `WMQS_BEST()` | Requête retenue pour le rejeu |
 | `WMQS_OWNED()` | Cartes de ta collection |
 | `WMQS_FORM()` | Ouvre le formulaire |
-| `WMQS_SUBMIT(card, prix, duréeMs, cb)` | Rejoue une mise en vente |
+| `WMQS_SUBMIT(card, cb)` | Rejoue une mise en vente |
 
 ---
 
