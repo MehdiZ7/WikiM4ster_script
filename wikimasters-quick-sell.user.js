@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WikiMasters - Vente rapide
 // @namespace    https://wiki-masters.com/
-// @version      2.0.0
-// @description  Survole une carte de ta collection et mets-la en vente en UN clic pour 1 credit / 30 min. Apprend puis rejoue la requete du site.
+// @version      2.1.0
+// @description  Un bouton "Vendre 1 - 30 min" est pose au-dessus de chacune de tes cartes de collection : un clic = mise en vente. Apprend puis rejoue la requete du site.
 // @author       you
 // @match        https://www.wiki-masters.com/*
 // @match        https://wiki-masters.com/*
@@ -266,11 +266,36 @@
       .catch(function (e) { onStatus('Erreur reseau : ' + (e && e.message), true); });
   }
 
+  function normalizeTitle(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
   function slugToOwned(src, cards) {
     const m = String(src || '').match(/cards(?:%2F|\/)([^.?&/]+)/i);
     const slug = m && m[1] && m[1].toLowerCase();
     if (!slug) return null;
     return cards.find(function (c) { return c.image && c.image.toLowerCase().indexOf(slug) !== -1; }) || null;
+  }
+
+  function resolveCard(container) {
+    if (!container) return null;
+    const texts = [normalizeTitle(container.textContent)];
+    const titled = container.querySelector('[title]');
+    if (titled) texts.push(normalizeTitle(titled.getAttribute('title')));
+    const srcImg = container.querySelector('img');
+    if (srcImg) texts.push(normalizeTitle((srcImg.getAttribute('alt') || '')));
+    let best = null;
+    for (const tx of texts) {
+      if (!tx) continue;
+      for (const c of (ownedCards || [])) {
+        const nt = normalizeTitle(c.title);
+        if (nt.length >= 3 && tx.indexOf(nt) !== -1) {
+          if (!best || nt.length > best.len) best = { card: c, len: nt.length };
+        }
+      }
+    }
+    return best ? best.card : null;
   }
 
   function toast(msg, isErr) {
@@ -292,12 +317,12 @@
     t.__timer = setTimeout(function () { t.style.opacity = '0'; }, 3500);
   }
 
-  function quickSell(img) {
-    const src = img.currentSrc || img.src || '';
+  function quickSell(container, img) {
+    const src = img ? (img.currentSrc || img.src || '') : '';
     fetchOwnedCards().then(function (cards) {
-      const card = slugToOwned(src, cards);
+      let card = resolveCard(container) || slugToOwned(src, cards);
       if (!card) {
-        toast('Carte introuvable dans ta collection.', true);
+        toast('Carte non identifiee : utilise le bouton \uFF0B Vendre.', true);
         return;
       }
       submitListing(card, function (msg, isErr) { toast(msg, isErr); });
@@ -306,45 +331,52 @@
     });
   }
 
-  function attachHover(img) {
-    const container = img.closest('a') || img.parentElement;
-    if (!container || container.dataset.wmHover) return;
-    container.dataset.wmHover = '1';
-    let btn = null;
-    function show() {
-      if (btn) return;
-      if (getComputedStyle(container).position === 'static') container.style.position = 'relative';
-      btn = document.createElement('button');
-      btn.className = 'wm-quick-sell-btn';
-      btn.textContent = 'Vendre ' + CONFIG.PRICE + ' \u00b7 ' + CONFIG.MINUTES + ' min';
-      btn.style.cssText = 'position:absolute;left:50%;bottom:8px;transform:translateX(-50%);z-index:20;' +
-        'padding:5px 10px;border-radius:8px;border:1px solid #3a5a3a;background:rgba(31,58,31,.96);' +
-        'color:#9fe29f;font-size:12px;font-weight:700;cursor:pointer;font-family:system-ui,sans-serif;white-space:nowrap;';
-      btn.addEventListener('click', function (ev) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        quickSell(img);
-      });
-      btn.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
-      container.appendChild(btn);
-    }
-    function hide() {
-      if (btn) { btn.remove(); btn = null; }
-    }
-    container.addEventListener('mouseenter', show);
-    container.addEventListener('mouseleave', hide);
+  function attachCard(img) {
+    const w = img.clientWidth || img.naturalWidth || 0;
+    const h = img.clientHeight || img.naturalHeight || 0;
+    if (w < 60 || h < 80) return;
+    if (h <= w) return;
+    const container = img.closest('a, li, article, figure') || img.parentElement;
+    if (!container || container.querySelector('.wm-quick-sell-btn')) return;
+    if (getComputedStyle(container).position === 'static') container.style.position = 'relative';
+    const btn = document.createElement('button');
+    btn.className = 'wm-quick-sell-btn';
+    btn.textContent = 'Vendre ' + CONFIG.PRICE + ' \u00b7 ' + CONFIG.MINUTES + ' min';
+    btn.style.cssText = 'position:absolute;top:4px;left:50%;transform:translateX(-50%);z-index:30;' +
+      'padding:5px 10px;border-radius:8px;border:1px solid #3a5a3a;background:rgba(31,58,31,.96);' +
+      'color:#9fe29f;font-size:12px;font-weight:700;cursor:pointer;font-family:system-ui,sans-serif;white-space:nowrap;' +
+      'box-shadow:0 3px 10px rgba(0,0,0,.5);';
+    btn.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      quickSell(container, img);
+    });
+    btn.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
+    container.appendChild(btn);
   }
 
   function scanCards() {
     try {
       if (/marketplace/i.test(location.pathname)) return;
       const imgs = document.querySelectorAll('img');
-      for (const img of imgs) {
-        const src = img.currentSrc || img.src || '';
-        if (!/cards(%2F|\/)/i.test(src)) continue;
-        attachHover(img);
-      }
+      for (const img of imgs) attachCard(img);
     } catch (e) {}
+  }
+
+  function dumpCards() {
+    try {
+      const out = [];
+      for (const img of document.querySelectorAll('img')) {
+        const w = img.clientWidth || 0;
+        const h = img.clientHeight || 0;
+        if (w < 60 || h < 80 || h <= w) continue;
+        const container = img.closest('a, li, article, figure') || img.parentElement;
+        out.push({ src: (img.currentSrc || img.src || '').slice(0, 120), w: w, h: h, html: container ? container.outerHTML.slice(0, 600) : null });
+        if (out.length >= 4) break;
+      }
+      console.log(JSON.stringify(out, null, 1));
+      return out;
+    } catch (e) { return []; }
   }
 
   function updateLauncher() {
@@ -459,4 +491,5 @@
   window.WMQS_OWNED = function () { return fetchOwnedCards(); };
   window.WMQS_FORM = openForm;
   window.WMQS_SUBMIT = submitListing;
+  window.WMQS_DUMP = dumpCards;
 })();
